@@ -318,12 +318,15 @@ if [ ${#EXCLUDE[@]} -gt 0 ]; then
   CANDIDATES=("${filtered[@]}")
 fi
 
-# 排序
+# 排序（逐行读回，避免词切割/合并）
 if [ ${#CANDIDATES[@]} -gt 0 ]; then
-  # shellcheck disable=SC2207
-  IFS=$'\n'
-  CANDIDATES=($(printf '%s\n' "${CANDIDATES[@]}" | sort))
-  unset IFS
+  sorted=()
+  while IFS= read -r line || [ -n "$line" ]; do
+    [ -n "$line" ] && sorted+=("$line")
+  done <<EOF
+$(printf '%s\n' "${CANDIDATES[@]}" | sort)
+EOF
+  CANDIDATES=("${sorted[@]}")
 fi
 
 if [ ${#CANDIDATES[@]} -eq 0 ]; then

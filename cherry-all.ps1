@@ -83,21 +83,36 @@ function Invoke-GitText {
 function Invoke-GitLines {
     param([string[]]$GitArgs)
     $r = Invoke-GitText -GitArgs $GitArgs
-    $list = New-Object System.Collections.Generic.List[string]
+    # 用 string[] 逐行输出；调用方必须用 @() 收集，避免单行时 [0] 取到字符
+    $out = @()
     foreach ($line in ($r.StdOut -split "`r?`n")) {
         $t = $line.TrimEnd()
-        if ($t -ne "") { [void]$list.Add($t) }
+        if ($t -ne "") { $out += $t }
     }
-    # 逗号运算符：阻止 PowerShell 展开集合；否则单行时返回 string，[0] 会取到首字符
-    return ,$list
+    return $out
 }
 
-# 安全取第一行（避免 string[0] 取字符）
+# 安全取第一行（避免 string[0] 取字符 / List 被拼成空格串）
 function Get-GitFirstLine {
     param([string[]]$GitArgs)
     $lines = @(Invoke-GitLines -GitArgs $GitArgs)
+    # 兼容：若仍包了一层集合，再展平一次
+    if ($lines.Count -eq 1 -and $lines[0] -is [System.Collections.IEnumerable] -and $lines[0] -isnot [string]) {
+        $lines = @($lines[0])
+    }
     if ($lines.Count -eq 0) { return $null }
     return [string]$lines[0]
+}
+
+# 把 git 多行输出规范成 string[]（每行一个元素）
+function Get-GitLineArray {
+    param([string[]]$GitArgs)
+    $lines = @(Invoke-GitLines -GitArgs $GitArgs)
+    if ($lines.Count -eq 1 -and $lines[0] -is [System.Collections.IEnumerable] -and $lines[0] -isnot [string]) {
+        $lines = @($lines[0])
+    }
+    # 过滤空值，统一成字符串数组
+    return @($lines | Where-Object { $_ -ne $null -and "$_" -ne "" } | ForEach-Object { [string]$_ })
 }
 
 # 解析选择输入：支持 1,3,5-8 / a|all / * 
@@ -191,7 +206,7 @@ Write-Info "说明: $commitMsg"
 
 # 仅检查已跟踪文件的未提交改动（未跟踪文件一般不阻止 checkout）
 $didStash = $false
-$statusLines = @(Invoke-GitLines -GitArgs @("status", "--porcelain", "--untracked-files=no"))
+$statusLines = @(Get-GitLineArray -GitArgs @("status", "--porcelain", "--untracked-files=no"))
 if ($statusLines.Count -gt 0) {
     if ($Force) {
         Write-Warn "工作区有 $($statusLines.Count) 处未提交改动，已用 -Force 跳过检查。"
@@ -225,8 +240,8 @@ if ($originalBranch -eq "HEAD") {
 }
 Write-Info "当前分支: $originalBranch"
 
-# 收集本地分支（不含 remote）
-$allLocalBranches = @(Invoke-GitLines -GitArgs @("-c", "core.quotepath=false", "for-each-ref", "--format=%(refname:short)", "refs/heads/"))
+# 收集本地分支（不含 remote）——必须逐行拆成独立元素
+$allLocalBranches = @(Get-GitLineArray -GitArgs @("-c", "core.quotepath=false", "for-each-ref", "--format=%(refname:short)", "refs/heads/"))
 $candidates = @($allLocalBranches)
 
 if ($IncludeOnly.Count -gt 0) {
